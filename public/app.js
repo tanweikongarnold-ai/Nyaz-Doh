@@ -1,17 +1,25 @@
 // Browser client. Talks to the server over a WebSocket and renders whatever state it is
 // sent. All game logic lives on the server; this file only shows it and sends choices.
 
-const $ = (sel) => document.querySelector(sel);
-const SVGNS = 'http://www.w3.org/2000/svg';
+import { createPitch2D } from './pitch2d.js';
 
-// Pitch geometry (SVG user units). Columns 0 and 12 are the goal lines.
-const CW = 64;
-const LH = 110;
-const PAD = 12;
-const W = 13 * CW;
-const H = 3 * LH + PAD * 2;
-const px = (x) => x * CW + CW / 2;
-const py = (y) => PAD + y * LH + LH / 2;
+const $ = (sel) => document.querySelector(sel);
+const store = {
+  get: (k, d) => {
+    try {
+      return localStorage.getItem(k) ?? d;
+    } catch {
+      return d;
+    }
+  },
+  set: (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      // private mode etc.: preferences just won't stick
+    }
+  },
+};
 
 const S = {
   ws: null,
@@ -33,6 +41,11 @@ const S = {
   reconnectDelay: 500,
   pendingJoin: new URLSearchParams(location.search).get('room'),
   ftDismissedFor: null,
+  view: store.get('is-view', '3d'), // '3d' | '2d'
+  cam: store.get('is-cam', 'follow'),
+  shownScore: null, // score held back while a replay is still playing
+  pendingReveal: null,
+  revealTimer: null,
 };
 const ui = { picking: null, hoverDesc: '' };
 
@@ -41,12 +54,6 @@ const ui = { picking: null, hoverDesc: '' };
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
-  setProps(el, props);
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
-  return el;
-}
-function sv(tag, props, ...kids) {
-  const el = document.createElementNS(SVGNS, tag);
   setProps(el, props);
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
   return el;
@@ -160,6 +167,7 @@ function onMessage(msg) {
 
 function onState(msg) {
   const prevPhase = S.room?.phase;
+  const prevScore = S.match ? { ...S.match.score } : null;
   S.room = msg.room;
   S.you = msg.you;
   S.offset = msg.serverNow - Date.now();
@@ -178,7 +186,6 @@ function onState(msg) {
     S.timerEndsAt = msg.timerEndsAt;
     if (newTurn) ui.picking = null;
     S.turnSeq = msg.turnSeq;
-    mergeFeed(msg.feed || [], msg.fullFeed);
   } else {
     S.match = null;
     S.options = null;
@@ -188,19 +195,52 @@ function onState(msg) {
   }
 
   if (msg.room.phase === 'lobby') {
+    flushReveal();
     showScreen('lobby');
     renderLobby();
     $('#overlay-ft').classList.add('hidden');
-  } else {
-    showScreen('match');
-    renderMatch();
-    if (msg.room.phase === 'over') {
-      if (prevPhase !== 'over') S.ftDismissedFor = null;
-      renderFulltime();
-    } else {
-      $('#overlay-ft').classList.add('hidden');
-    }
+    return;
   }
+
+  // New play-by-play arrived: replay it on the pitch, and hold back the commentary,
+  // score and full-time screen until the replay gets there, so nothing is spoiled.
+  if (msg.room.phase === 'over' && prevPhase !== 'over') S.ftDismissedFor = null;
+  const entries = takeNewEntries(msg.feed || [], msg.fullFeed);
+  const animate = !msg.fullFeed && entries.length > 0;
+  if (msg.fullFeed) flushReveal();
+  showScreen('match');
+  if (animate && prevScore) S.shownScore = prevScore;
+  const duration = renderMatch(animate ? entries.at(-1).events : null);
+  const reveal = () => {
+    appendFeed(entries, animate);
+    S.shownScore = null;
+    renderScoreboard();
+    if (S.room?.phase === 'over') renderFulltime();
+    else $('#overlay-ft').classList.add('hidden');
+  };
+  if (animate && duration > 0) scheduleReveal(reveal, duration);
+  else if (entries.length || !S.pendingReveal) {
+    flushReveal();
+    reveal();
+  }
+  // Otherwise a replay is still running and its reveal will catch everything up.
+}
+
+function scheduleReveal(fn, ms) {
+  flushReveal();
+  S.pendingReveal = fn;
+  S.revealTimer = setTimeout(() => {
+    const f = S.pendingReveal;
+    S.pendingReveal = null;
+    f?.();
+  }, ms);
+}
+
+function flushReveal() {
+  clearTimeout(S.revealTimer);
+  const f = S.pendingReveal;
+  S.pendingReveal = null;
+  f?.();
 }
 
 function setUrlRoom(code) {
@@ -304,18 +344,20 @@ function slotCard(r, slot) {
 // ---------------------------------------------------------------------------
 // Match
 
-function renderMatch() {
+function renderMatch(playback = null) {
   renderScoreboard();
-  renderPitch();
+  const duration = renderPitch(playback);
   renderYou();
   renderActions();
   renderRosters();
+  return duration;
 }
 
 function renderScoreboard() {
   const m = S.match;
-  $('#sb-home').textContent = m.score.home;
-  $('#sb-away').textContent = m.score.away;
+  const score = S.shownScore ?? m.score;
+  $('#sb-home').textContent = score.home;
+  $('#sb-away').textContent = score.away;
   const over = m.phase === 'over';
   $('#sb-clock').textContent = over ? 'FT' : `${m.minute}'`;
   $('#sb-turn').textContent = over ? `Full time · ${m.maxTurns} turns` : `Turn ${m.turn}/${m.maxTurns} · ${m.half === 1 ? '1st' : '2nd'} half`;
@@ -347,128 +389,100 @@ function tickTimer() {
 setInterval(tickTimer, 250);
 
 // ---- pitch ----------------------------------------------------------------
+// The pitch is either the 3D scene (three.js, loaded on demand) or the flat SVG one.
 
-let pitchBuilt = false;
-const pEls = new Map();
-let ballEl = null;
-let markerLayer = null;
+const has3D = (() => {
+  try {
+    return !!document.createElement('canvas').getContext('webgl2');
+  } catch {
+    return false;
+  }
+})();
+let pitch = null;
+let pitchLoading = null;
+const pitchHandlers = {
+  onPlayerClick: (idx) => onPlayerClick(idx),
+  onMarkerClick: (dir) => choose({ type: 'dribble', dir }),
+  onGoal: (e) => showGoal(e),
+};
 
-function buildPitch() {
-  const svg = $('#pitch');
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.replaceChildren();
-  const top = PAD;
-  const bottom = H - PAD;
-  for (let c = 0; c < 12; c++) svg.append(sv('rect', { x: px(c), y: top, width: CW, height: bottom - top, class: c % 2 ? 'stripe-a' : 'stripe-b' }));
-  svg.append(
-    sv('rect', { x: px(0), y: top, width: px(12) - px(0), height: bottom - top, class: 'pline' }),
-    sv('line', { x1: px(6), y1: top, x2: px(6), y2: bottom, class: 'pline' }),
-    sv('circle', { cx: px(6), cy: H / 2, r: 48, class: 'pline' }),
-    sv('circle', { cx: px(6), cy: H / 2, r: 3, fill: 'rgba(255,255,255,.6)' }),
-    sv('rect', { x: px(0), y: top + LH * 0.45, width: CW * 2.3, height: LH * 2.1, class: 'pline' }),
-    sv('rect', { x: px(12) - CW * 2.3, y: top + LH * 0.45, width: CW * 2.3, height: LH * 2.1, class: 'pline' }),
-    sv('rect', { x: px(0) - 22, y: py(1) - 42, width: 22, height: 84, class: 'goalnet' }),
-    sv('rect', { x: px(12), y: py(1) - 42, width: 22, height: 84, class: 'goalnet' }),
-  );
-  for (let y = 0; y < 3; y++) {
-    svg.append(sv('text', { x: px(6), y: py(y) - LH / 2 + 14, class: 'lane-label', 'text-anchor': 'middle' }, ['TOP', 'MIDDLE', 'BOTTOM'][y]));
-  }
-  markerLayer = sv('g', {});
-  svg.append(markerLayer);
-  pEls.clear();
-  for (const p of S.match.players) {
-    const g = sv('g', { class: `player ${p.team}`, 'data-idx': p.idx });
-    const inner = sv('g', { class: 'glyph' },
-      sv('circle', { r: 27, class: 'target-ring' }),
-      sv('circle', { r: 26, class: 'me-ring hidden' }),
-      sv('circle', { r: 20, class: 'body' }),
-      sv('text', { class: 'initials' }, initials(p.name)),
-      sv('text', { class: 'status', y: -28 }, ''),
-      sv('rect', { x: -18, y: 24, width: 36, height: 4, rx: 2, class: 'sta-bg' }),
-      sv('rect', { x: -18, y: 24, width: 36, height: 4, rx: 2, class: 'sta' }),
-      sv('text', { class: 'name-tag', y: 42 }, p.name),
-      sv('title', {}, p.name),
-    );
-    g.append(inner);
-    g.addEventListener('click', () => onPlayerClick(p.idx));
-    svg.append(g);
-    pEls.set(p.idx, g);
-  }
-  ballEl = sv('g', { class: 'ball' }, sv('circle', { r: 7 }));
-  svg.append(ballEl);
-  pitchBuilt = true;
+function wantedView() {
+  return S.view === '3d' && has3D ? '3d' : '2d';
 }
 
-// Where each member of a crowd sharing one cell stands, relative to the cell centre.
-const CROWD = {
-  1: [[0, 0]],
-  2: [[-20, -16], [20, 16]],
-  3: [[-22, -24], [22, -24], [0, 24]],
-  4: [[-22, -24], [22, -24], [-22, 24], [22, 24]],
-  5: [[-40, -24], [0, -24], [40, -24], [-22, 24], [22, 24]],
-  6: [[-40, -24], [0, -24], [40, -24], [-40, 24], [0, 24], [40, 24]],
-};
-// On a phone the whole pitch is drawn at under half size, so draw the players bigger.
-const smallScreen = window.matchMedia('(max-width: 760px)');
-smallScreen.addEventListener('change', () => S.match && renderPitch());
-
-function renderPitch() {
-  const m = S.match;
-  if (!pitchBuilt || pEls.size !== m.players.length) buildPitch();
-  const k = smallScreen.matches ? 1.45 : 1;
-  const groups = new Map();
-  for (const p of m.players) {
-    const key = `${p.x},${p.y}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p.idx);
-  }
-  const targetable = pickingTargets();
-  const pos = new Map();
-  for (const p of m.players) {
-    const group = groups.get(`${p.x},${p.y}`);
-    const [dx, dy] = CROWD[group.length][group.indexOf(p.idx)];
-    const crowded = group.length > 1;
-    const scale = k * (crowded ? 0.85 : 1);
-    const X = px(p.x) + dx * k;
-    const Y = py(p.y) + dy * k;
-    pos.set(p.idx, { X, Y, scale });
-    const g = pEls.get(p.idx);
-    g.style.transform = `translate(${X}px, ${Y}px)`;
-    g.querySelector('.glyph').setAttribute('transform', `scale(${scale})`);
-    // Initials are enough when players are bunched up or the pitch is tiny.
-    g.querySelector('.name-tag').classList.toggle('hidden', crowded || k > 1);
-    g.classList.toggle('down', p.grounded);
-    g.classList.toggle('targetable', targetable.has(p.idx));
-    g.querySelector('.me-ring').classList.toggle('hidden', p.idx !== S.you?.slot);
-    g.querySelector('.status').textContent = p.grounded ? '💤' : p.dazed ? '💫' : '';
-    const sta = g.querySelector('.sta');
-    sta.setAttribute('width', String(Math.max(0, (p.stamina / p.maxStamina) * 36)));
-    sta.classList.toggle('low', p.stamina < 25);
-    g.querySelector('title').textContent = `${p.name} (${p.role}) · stamina ${p.stamina}/${p.maxStamina}${p.grounded ? ' · on the floor' : ''}${p.dazed ? ' · dazed' : ''}`;
-  }
-  const c = pos.get(m.ballCarrier);
-  const dirX = m.players[m.ballCarrier].team === 'home' ? 1 : -1;
-  ballEl.style.transform = `translate(${c.X + 16 * dirX * c.scale}px, ${c.Y + 15 * c.scale}px) scale(${c.scale})`;
-
-  // Dribble destinations
-  markerLayer.replaceChildren();
-  const opt = ui.picking && S.options?.actions.find((a) => a.type === ui.picking);
-  if (opt?.variants) {
-    for (const v of opt.variants) {
-      const mk = sv('g', { class: 'dest-marker', transform: `translate(${px(v.dest.x)} ${py(v.dest.y)})` },
-        sv('circle', { r: 20 }),
-        sv('text', {}, `${v.chance}%`),
-        sv('title', {}, `${v.label}: ${v.chance}%`),
-      );
-      mk.addEventListener('click', () => choose({ type: 'dribble', dir: v.dir }));
-      markerLayer.append(mk);
+function ensurePitch() {
+  if (pitch && pitch.kind === wantedView()) return Promise.resolve(pitch);
+  if (pitchLoading) return pitchLoading;
+  pitchLoading = (async () => {
+    pitch?.dispose();
+    pitch = null;
+    const el = $('#pitch');
+    if (wantedView() === '3d') {
+      try {
+        const mod = await import('./pitch3d.js');
+        pitch = mod.createPitch3D(el, pitchHandlers);
+        pitch.setCamera(S.cam);
+      } catch (err) {
+        console.warn('3D pitch unavailable, using 2D', err);
+        S.view = '2d';
+      }
     }
-  }
+    if (!pitch) pitch = createPitch2D(el, pitchHandlers);
+    renderPitchTools();
+    return pitch;
+  })().finally(() => {
+    pitchLoading = null;
+  });
+  return pitchLoading;
+}
 
+function renderPitchTools() {
+  const box = $('#pitch-tools');
+  const seg = (items, active, onPick) => h('div', { class: 'seg' }, items.map(([key, label, title]) => h('button', {
+    class: `seg-btn ${key === active ? 'on' : ''}`, type: 'button', title, 'aria-pressed': key === active ? 'true' : 'false',
+    onclick: () => onPick(key),
+  }, label)));
+  const kids = [];
+  if (has3D) {
+    kids.push(seg([['3d', '3D'], ['2d', '2D']], wantedView(), (v) => {
+      S.view = v;
+      store.set('is-view', v);
+      ensurePitch().then(() => renderPitch());
+    }));
+  }
+  if (pitch?.kind === '3d') {
+    kids.push(seg([
+      ['follow', 'Follow ball', 'Broadcast camera that follows the ball'],
+      ['me', 'Behind me', 'Over-the-shoulder view of your player'],
+      ['wide', 'Wide', 'The whole pitch'],
+      ['top', 'Top', "Bird's-eye view"],
+      ['free', 'Free', 'Drag to orbit, scroll or pinch to zoom'],
+    ], S.cam, (c) => {
+      S.cam = c;
+      store.set('is-cam', c);
+      pitch.setCamera(c);
+      renderPitchTools();
+    }));
+  }
+  box.replaceChildren(...kids);
+}
+
+// Returns how long (ms) the pitch needs to replay `playback`.
+function renderPitch(playback = null) {
+  if (!S.match) return 0;
+  if (!pitch || pitch.kind !== wantedView()) {
+    ensurePitch().then(() => renderPitch());
+    return 0;
+  }
+  const opt = ui.picking && S.options?.actions.find((a) => a.type === ui.picking);
+  const markers = (opt?.variants || []).map((v) => ({ x: v.dest.x, y: v.dest.y, chance: v.chance, label: v.label, dir: v.dir }));
+  const targets = pickingTargets();
+  const duration = pitch.update({ match: S.match, youSlot: S.you?.slot ?? -1, targets, markers, playback });
   const hint = $('#pitch-hint');
-  if (targetable.size) hint.textContent = 'Click a highlighted player (or pick from the list) to choose your target.';
-  else if (opt?.variants) hint.textContent = 'Click a dashed circle (or pick from the list) to choose where to dribble.';
-  else hint.textContent = '';
+  if (targets.size) hint.textContent = 'Click a highlighted player (or pick from the list) to choose your target.';
+  else if (markers.length) hint.textContent = 'Click a yellow ring (or pick from the list) to choose where to dribble.';
+  else hint.textContent = pitch.kind === '3d' && S.cam === 'free' ? 'Drag to orbit · scroll or pinch to zoom' : '';
+  return duration;
 }
 
 function pickingTargets() {
@@ -711,23 +725,24 @@ function renderRosters() {
 
 // ---- feed ------------------------------------------------------------------
 
-function mergeFeed(entries, full) {
-  const feed = $('#feed');
+// Feed entries we haven't shown yet (all of them on a full refresh).
+function takeNewEntries(entries, full) {
   if (full) {
-    feed.replaceChildren();
+    $('#feed').replaceChildren();
     S.seenSeqs.clear();
   }
-  let goal = null;
+  const fresh = entries.filter((e) => !S.seenSeqs.has(e.seq));
+  for (const e of fresh) S.seenSeqs.add(e.seq);
+  return fresh;
+}
+
+function appendFeed(entries, highlight) {
+  const feed = $('#feed');
   for (const entry of entries) {
-    if (S.seenSeqs.has(entry.seq)) continue;
-    S.seenSeqs.add(entry.seq);
-    const block = h('li', { class: `turn-block ${full ? '' : 'fresh'}` },
+    feed.prepend(h('li', { class: `turn-block ${highlight ? 'fresh' : ''}` },
       h('div', { class: 't-min' }, entry.seq === 0 ? 'KICK-OFF' : `${entry.minute}'`),
-      entry.events.map(renderEvent));
-    feed.prepend(block);
-    if (!full) goal = entry.events.find((e) => e.goal) ?? goal;
+      entry.events.map(renderEvent)));
   }
-  if (goal) showGoal(goal);
 }
 
 function renderEvent(e) {

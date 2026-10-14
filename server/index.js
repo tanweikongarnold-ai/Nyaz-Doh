@@ -7,7 +7,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { RoomManager } from './rooms.js';
 
-const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PUBLIC_DIR = path.join(ROOT, 'public');
+// three.js is served straight from node_modules so the game also works offline / on a LAN.
+const VENDOR = { '/vendor/three/': path.join(ROOT, 'node_modules', 'three') };
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -36,8 +39,18 @@ function serveStatic(req, res) {
     return;
   }
   if (rel.endsWith('/')) rel += 'index.html';
-  const file = path.resolve(PUBLIC_DIR, `.${rel}`);
-  if (!file.startsWith(PUBLIC_DIR + path.sep)) {
+  let base = PUBLIC_DIR;
+  const prefix = Object.keys(VENDOR).find((pre) => rel.startsWith(pre));
+  if (prefix) {
+    base = VENDOR[prefix];
+    rel = `/${rel.slice(prefix.length)}`;
+    if (!rel.endsWith('.js')) {
+      res.writeHead(403).end();
+      return;
+    }
+  }
+  const file = path.resolve(base, `.${rel}`);
+  if (!file.startsWith(base + path.sep)) {
     res.writeHead(403).end();
     return;
   }
@@ -49,7 +62,7 @@ function serveStatic(req, res) {
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
       'content-length': st.size,
-      'cache-control': 'no-cache',
+      'cache-control': prefix ? 'public, max-age=86400' : 'no-cache',
     });
     if (req.method === 'HEAD') res.end();
     else fs.createReadStream(file).pipe(res);

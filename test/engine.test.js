@@ -202,6 +202,28 @@ test('full AI matches keep the game state valid', () => {
   }
 });
 
+test('animation hints agree with who ends up holding the ball', () => {
+  for (let seed = 100; seed < 140; seed++) {
+    const rng = mulberry32(seed);
+    const m = createMatch({ maxTurns: 20, rng });
+    while (m.phase === 'choosing') {
+      const before = m.ballCarrier;
+      const events = resolveTurn(m, m.players.map((p) => chooseAction(m, p.idx, 'normal', rng)), rng);
+      const resets = events.some((e) => e.goal || e.kind === 'halftime' || e.kind === 'fulltime');
+      const holders = events.filter((e) => e.holder != null).map((e) => e.holder);
+      if (!resets) assert.equal(m.ballCarrier, holders.length ? holders.at(-1) : before, `seed ${seed}: ${events.map((e) => e.kind)}`);
+      for (const e of events) {
+        for (const seg of e.path || []) {
+          for (const pt of [seg.from, seg.to]) {
+            assert.ok(pt.x >= -1 && pt.x <= 13 && pt.y >= -0.5 && pt.y <= 2.5, `path point off the map: ${JSON.stringify(pt)}`);
+          }
+          assert.ok(typeof seg.style === 'string');
+        }
+      }
+    }
+  }
+});
+
 test('halftime swaps the kickoff and restores some stamina', () => {
   const m = createMatch({ maxTurns: 10, kickoff: 'home', rng: mulberry32(13) });
   const rng = mulberry32(99);

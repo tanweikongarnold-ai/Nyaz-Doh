@@ -9,6 +9,8 @@ A turn-based, multiplayer 3v3 street soccer game inspired by the Roblox game *Il
 - **Head-to-head:** up to 3v3 humans. Any empty seat is played by the AI.
 - **Spectate:** start a room with nobody seated and watch the AI play itself, or join a running match and take over an AI seat mid-game.
 
+The match is played on a **3D street pitch**: a floodlit cage with blocky players, goalkeepers and a graffiti wall. After everyone picks their moves, the turn replays in 3D: slide tackles, passes along their real paths, shots, keeper dives, stomps, teleports and goal celebrations. The play-by-play and the score update when the replay finishes, so nothing is spoiled. You can pick one of five cameras (Follow ball, Behind me, Wide, Top, or Free to orbit and zoom), and switch to a flat 2D pitch at any time. Browsers without WebGL 2 get the 2D pitch automatically.
+
 ## Run it
 
 You need [Node.js](https://nodejs.org) 18 or newer.
@@ -91,11 +93,16 @@ server/
   index.js       static file server + WebSocket endpoint (/ws)
   rooms.js       rooms, seats, reconnects, turn timers, AI fill-in
 public/          browser client (plain HTML/CSS/JS, no build step)
+  app.js         screens, lobby, action panel, play-by-play
+  pitch3d.js     three.js pitch: players, replays, cameras, effects
+  pitch2d.js     flat SVG pitch (fallback / 2D mode)
 test/            engine and server tests
 scripts/         balance simulator
 ```
 
-The server is authoritative. Clients only send "I choose X"; the server validates the move, keeps everyone's choice secret until the turn resolves, and runs the engine.
+The server is authoritative. Clients only send "I choose X"; the server validates the move, keeps everyone's choice secret until the turn resolves, and runs the engine. Each event the engine produces also says how the ball moved (`path`), who ended up with it (`holder`), and how players slid or teleported. The 3D client replays the turn from that data.
+
+three.js is installed through npm and served from `node_modules` at `/vendor/three/`, so the game doesn't depend on a CDN and works on a LAN without internet.
 
 ## Tests and balance
 

@@ -278,6 +278,7 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     ctx.knocked.add(p.idx);
     p.groundedUntil = T + 1;
   };
+  const at = (p) => ({ x: p.x, y: p.y });
   const moveTo = (p, pos) => {
     p.x = pos.x;
     p.y = pos.y;
@@ -427,27 +428,30 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
 
   // ---- action implementations (hoisted; they close over the turn's state) ----
 
+  // Events carry animation hints for the 3D view: `path` is how the ball travelled,
+  // `holder` who ended up with it, `slide`/`teleport` how a player moved.
   function doTackle(t, v, rocket) {
     const m = meters(dist(t, v));
+    const slide = { from: at(t), to: at(v) };
     const vars = { name: t.name, target: v.name, m, team: TEAMS[t.team].name };
     t.record.tackles++;
     state.teamStats[t.team].tackles++;
     if (ctx.knocked.has(v.idx)) {
       moveTo(t, v);
-      ev('tackleNoTarget', vars, { actor: t.idx, team: t.team });
+      ev('tackleNoTarget', vars, { actor: t.idx, team: t.team, target: v.idx, slide });
       return;
     }
     if (ctx.immune.has(v.idx)) {
       moveTo(t, v);
       if (!rocket) ground(t);
-      ev('tackleImmune', vars, { actor: t.idx, team: t.team });
+      ev('tackleImmune', vars, { actor: t.idx, team: t.team, target: v.idx, slide });
       return;
     }
     const stealing = state.ballCarrier === v.idx;
     const res = roll(odds.tackleChance(ctx, t, v, rocket));
     const crit = res.ok && res.r < (res.chance / 100) * 0.25;
     moveTo(t, v);
-    const info = { actor: t.idx, team: t.team, chance: res.chance, roll: res.roll, ok: res.ok, label: rocket ? 'Rocket Slide' : 'Slide tackle' };
+    const info = { actor: t.idx, team: t.team, target: v.idx, slide, chance: res.chance, roll: res.roll, ok: res.ok, label: rocket ? 'Rocket Slide' : 'Slide tackle' };
     if (res.ok) {
       t.record.tacklesWon++;
       state.teamStats[t.team].tacklesWon++;
@@ -455,7 +459,7 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
       if (stealing) {
         giveBall(state, t.idx);
         t.record.steals++;
-        ev(rocket ? 'rocketSteal' : crit ? 'tackleStealCrit' : 'tackleSteal', vars, { ...info, big: true });
+        ev(rocket ? 'rocketSteal' : crit ? 'tackleStealCrit' : 'tackleSteal', vars, { ...info, big: true, holder: t.idx });
       } else {
         ev(rocket ? 'rocketKnock' : crit ? 'tackleKnockCrit' : 'tackleKnock', vars, { ...info, big: crit || rocket });
       }
@@ -473,6 +477,7 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
       return;
     }
     const hit = [];
+    const hitIdx = [];
     let carrierHit = false;
     for (const o of victims) {
       if (ctx.immune.has(o.idx)) {
@@ -483,32 +488,35 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
       if (!res.ok) continue;
       knock(o, 12);
       hit.push(o.name);
+      hitIdx.push(o.idx);
       if (state.ballCarrier === o.idx) carrierHit = true;
     }
-    if (hit.length) ev('stompResult', { list: joinNames(hit) }, { actor: b.idx, team: b.team });
+    if (hit.length) ev('stompResult', { list: joinNames(hit) }, { actor: b.idx, team: b.team, victims: hitIdx });
     else ev('stompWhiff', { name: b.name }, { actor: b.idx, team: b.team });
     if (carrierHit) {
       giveBall(state, b.idx);
-      ev('stompSteal', { name: b.name }, { actor: b.idx, team: b.team, big: true });
+      ev('stompSteal', { name: b.name }, { actor: b.idx, team: b.team, big: true, holder: b.idx });
     }
   }
 
   function doPhantom(n) {
+    const from = at(n);
     if (state.ballCarrier === n.idx) {
-      const from = { x: n.x, y: n.y };
       moveTo(n, odds.openSpot(ctx, n, clampX(n.x + 4 * dir(n.team))));
       ctx.immune.add(n.idx);
-      ev('phantomBall', { name: n.name, m: meters(dist(from, n)) }, { actor: n.idx, team: n.team, big: true });
+      ev('phantomBall', { name: n.name, m: meters(dist(from, n)) }, {
+        actor: n.idx, team: n.team, big: true, teleport: { from, to: at(n) }, path: [{ from, to: at(n), style: 'blink' }],
+      });
     } else if (state.possession === n.team) {
       moveTo(n, odds.openSpot(ctx, n, clampX(n.x + 5 * dir(n.team))));
       ctx.immune.add(n.idx);
       ctx.open.set(n.idx, 0.15);
-      ev('phantomRun', { name: n.name, zone: zoneName(n.team, n) }, { actor: n.idx, team: n.team, big: true });
+      ev('phantomRun', { name: n.name, zone: zoneName(n.team, n) }, { actor: n.idx, team: n.team, big: true, teleport: { from, to: at(n) } });
     } else {
       const c = P[state.ballCarrier];
       moveTo(n, { x: clampX(c.x + dir(c.team)), y: c.y });
       ctx.extraMarks.push({ by: n.idx, target: c.idx, eff: 1.5 });
-      ev('phantomDefend', { name: n.name, target: c.name }, { actor: n.idx, team: n.team, big: true });
+      ev('phantomDefend', { name: n.name, target: c.name }, { actor: n.idx, team: n.team, big: true, target: c.idx, teleport: { from, to: at(n) } });
     }
   }
 
@@ -520,7 +528,7 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     const info = { actor: c.idx, team: c.team, chance: res.chance, roll: res.roll, ok: res.ok, label: 'Dribble' };
     if (res.ok) {
       moveTo(c, dest);
-      ev('dribbleOk', { name: c.name, m: meters(dist(from, dest)), zone: zoneName(c.team, dest) }, info);
+      ev('dribbleOk', { name: c.name, m: meters(dist(from, dest)), zone: zoneName(c.team, dest) }, { ...info, path: [{ from, to: dest, style: 'carry' }] });
       return;
     }
     const thieves = odds.opponentsOf(state, c.team)
@@ -533,7 +541,7 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     const thief = thieves[0];
     giveBall(state, thief.idx);
     thief.record.steals++;
-    ev('dribbleLost', { name: c.name, target: thief.name }, info);
+    ev('dribbleLost', { name: c.name, target: thief.name }, { ...info, target: thief.idx, holder: thief.idx });
   }
 
   function doPass(c, r) {
@@ -542,17 +550,23 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     state.teamStats[c.team].passes++;
     if (ctx.knocked.has(r.idx)) {
       const got = looseBall(r, r.idx);
-      ev('passToDowned', { name: c.name, receiver: r.name, target: got.name }, { actor: c.idx, team: c.team, ok: false, label: 'Pass' });
+      ev('passToDowned', { name: c.name, receiver: r.name, target: got.name }, {
+        actor: c.idx, team: c.team, ok: false, label: 'Pass', target: r.idx, holder: got.idx,
+        path: [{ from: at(c), to: at(r), style: 'pass' }, { from: at(r), to: at(got), style: 'loose' }],
+      });
       return;
     }
     const { chance, interceptors } = odds.passInfo(ctx, c, r);
     const res = roll(chance);
-    const info = { actor: c.idx, team: c.team, chance: res.chance, roll: res.roll, ok: res.ok, label: 'Pass' };
+    const info = { actor: c.idx, team: c.team, target: r.idx, chance: res.chance, roll: res.roll, ok: res.ok, label: 'Pass' };
+    const style = dist(c, r) > 5 ? 'loft' : 'pass';
     if (res.ok) {
       giveBall(state, r.idx);
       c.record.passesDone++;
       state.teamStats[c.team].passesDone++;
-      ev(ctx.open.has(r.idx) ? 'passThrough' : 'passOk', { name: c.name, target: r.name, m: meters(dist(c, r)) }, info);
+      ev(ctx.open.has(r.idx) ? 'passThrough' : 'passOk', { name: c.name, target: r.name, m: meters(dist(c, r)) }, {
+        ...info, holder: r.idx, path: [{ from: at(c), to: at(r), style }],
+      });
       return;
     }
     // Who gets it? Defenders in the lane, the receiver's markers, or whoever is closest.
@@ -567,7 +581,9 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     }
     if (!weights.size) {
       const got = looseBall(r, r.idx);
-      ev('passLoose', { name: c.name, target: got.name }, info);
+      ev('passLoose', { name: c.name, target: got.name }, {
+        ...info, holder: got.idx, path: [{ from: at(c), to: at(r), style: 'loft' }, { from: at(r), to: at(got), style: 'loose' }],
+      });
       return;
     }
     let total = 0;
@@ -581,7 +597,9 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     }
     giveBall(state, thief.idx);
     thief.record.steals++;
-    ev('passIntercepted', { name: c.name, receiver: r.name, target: thief.name }, info);
+    ev('passIntercepted', { name: c.name, receiver: r.name, target: thief.name }, {
+      ...info, holder: thief.idx, path: [{ from: at(c), to: at(thief), style }],
+    });
   }
 
   // Returns the scoring team, or null.
@@ -593,12 +611,18 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
     const info = { actor: c.idx, team: c.team, chance: res.chance, roll: res.roll, ok: res.ok, label };
     c.record.shots++;
     state.teamStats[c.team].shots++;
+    // Where the ball ends up, for the animation. Deterministic so it doesn't disturb the dice.
+    const g = goalFor(c.team);
+    const dx = dir(c.team);
+    const aim = (((state.turn * 37 + c.idx * 11) % 7) - 3) / 10; // -0.3..0.3 lanes off-centre
+    const side = aim >= 0 ? 1 : -1;
+    const keeperSpot = { x: g.x - dx * 0.15, y: 1 };
     if (res.ok) {
       c.record.goals++;
       state.score[c.team]++;
       state.teamStats[c.team].goals++;
       state.teamStats[c.team].onTarget++;
-      ev(`goal_${kind}`, { name: c.name, m }, { ...info, big: true, goal: true });
+      ev(`goal_${kind}`, { name: c.name, m }, { ...info, big: true, goal: true, path: [{ from: at(c), to: { x: g.x + dx * 0.3, y: 1 + aim }, style: kind }] });
       return c.team;
     }
     const defTeam = other(c.team);
@@ -608,20 +632,26 @@ export function resolveTurn(state, choicesIn = [], rng = Math.random) {
       const b = blockers[Math.floor(rng() * blockers.length)];
       if (kind === 'power') pay(b, 8);
       giveBall(state, b.idx);
-      ev('shotBlocked', { name: c.name, target: b.name, m }, info);
+      ev('shotBlocked', { name: c.name, target: b.name, m }, { ...info, target: b.idx, holder: b.idx, path: [{ from: at(c), to: at(b), style: 'deflect' }] });
     } else if (res.r < res.chance / 100 + 0.08) {
-      const g = goalFor(c.team);
-      const got = looseBall({ x: g.x - dir(c.team), y: 1 });
-      ev('shotPost', { name: c.name, target: got.name, m }, info);
+      const got = looseBall({ x: g.x - dx, y: 1 });
+      const post = { x: g.x, y: 1 + side * 0.4 };
+      ev('shotPost', { name: c.name, target: got.name, m }, {
+        ...info, holder: got.idx, path: [{ from: at(c), to: post, style: kind }, { from: post, to: at(got), style: 'loose' }],
+      });
     } else if (res.r < res.chance / 100 + 0.4) {
       state.teamStats[c.team].onTarget++;
       const k = goalKick(defTeam);
-      ev('shotSaved', { name: c.name, m }, info);
-      ev('restartGoalKick', { target: k.name, team: TEAMS[defTeam].name }, { team: defTeam, minor: true });
+      ev('shotSaved', { name: c.name, m }, { ...info, save: true, path: [{ from: at(c), to: { x: keeperSpot.x, y: 1 + aim * 0.8 }, style: kind }] });
+      ev('restartGoalKick', { target: k.name, team: TEAMS[defTeam].name }, {
+        team: defTeam, minor: true, holder: k.idx, path: [{ from: keeperSpot, to: at(k), style: 'loft' }],
+      });
     } else {
       const k = goalKick(defTeam);
-      ev('shotWide', { name: c.name, m }, info);
-      ev('restartGoalKick', { target: k.name, team: TEAMS[defTeam].name }, { team: defTeam, minor: true });
+      ev('shotWide', { name: c.name, m }, { ...info, path: [{ from: at(c), to: { x: g.x + dx * 0.8, y: 1 + side * 0.75 }, style: kind }] });
+      ev('restartGoalKick', { target: k.name, team: TEAMS[defTeam].name }, {
+        team: defTeam, minor: true, holder: k.idx, path: [{ from: keeperSpot, to: at(k), style: 'loft' }],
+      });
     }
     return null;
   }

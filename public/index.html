@@ -7,6 +7,14 @@
   <meta name="description" content="Turn-based 3v3 street soccer with slide tackles, specials and no referee. Play solo vs AI or with friends.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
   <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.module.min.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -45,6 +53,7 @@
             <li><b>Everyone moves at once.</b> Each turn every player secretly picks a move, then it all happens together.</li>
             <li><b>The odds are real.</b> Distance, stats, stamina and what your opponents chose decide every roll.</li>
             <li><b>No fouls.</b> Slide tackle the carrier to steal it, or flatten anyone to cancel their move.</li>
+            <li><b>Watch it in 3D.</b> Every turn replays on a floodlit street pitch: tackles, passes, shots, keeper dives. Pick your camera, or switch to 2D.</li>
           </ul>
         </div>
       </div>
@@ -106,8 +115,11 @@
       <div class="match-grid">
         <div class="pitch-col">
           <div class="pitch-wrap card">
-            <svg id="pitch" role="img" aria-label="Pitch"></svg>
-            <div id="goal-banner" class="goal-banner hidden"></div>
+            <div id="pitch-tools" class="pitch-tools"></div>
+            <div class="pitch-holder">
+              <div id="pitch" class="pitch-stage"></div>
+              <div id="goal-banner" class="goal-banner hidden"></div>
+            </div>
           </div>
           <div id="pitch-hint" class="pitch-hint muted small"></div>
         </div>

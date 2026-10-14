@@ -53,6 +53,13 @@ test('static client is served', async () => {
   assert.match(js.headers.get('content-type'), /javascript/);
   const evil = await fetch(`http://127.0.0.1:${srv.port}/..%2fpackage.json`);
   assert.ok([403, 404].includes(evil.status));
+  const three = await fetch(`http://127.0.0.1:${srv.port}/vendor/three/build/three.module.js`);
+  assert.equal(three.status, 200);
+  assert.match(three.headers.get('content-type'), /javascript/);
+  const threePkg = await fetch(`http://127.0.0.1:${srv.port}/vendor/three/package.json`);
+  assert.equal(threePkg.status, 403, 'only .js files are exposed from node_modules');
+  const escape = await fetch(`http://127.0.0.1:${srv.port}/vendor/three/..%2f..%2fserver%2findex.js`);
+  assert.ok([403, 404].includes(escape.status));
 });
 
 test('quick match puts you in a running game vs AI', async () => {
