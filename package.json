@@ -1,0 +1,20 @@
+{
+  "name": "illegal-soccer-3v3",
+  "version": "1.0.0",
+  "description": "Turn-based multiplayer 3v3 street soccer inspired by Roblox's Illegal Soccer. Play solo vs AI, co-op vs AI, or head-to-head.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js",
+    "sim": "node scripts/simulate.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
