@@ -21,7 +21,7 @@
     <a class="brand" href="./" aria-label="Illegal Soccer home">ILLEGAL<span>SOCCER</span><small>3v3</small></a>
     <div class="topbar-right">
       <button id="btn-help" class="btn small ghost" type="button">How to play</button>
-      <span id="conn" class="conn" title="Connection">connecting…</span>
+      <span id="conn" class="conn online-only" title="Connection">connecting…</span>
     </div>
   </header>
 
@@ -39,9 +39,11 @@
           </label>
           <button id="btn-quick" class="btn primary big" type="button">Quick match vs AI</button>
           <p class="muted small">You play Blaze. Your two teammates and the whole rival team are AI.</p>
-          <div class="divider"><span>or play with friends</span></div>
-          <button id="btn-create" class="btn big" type="button">Create a room</button>
-          <form id="join-form" class="join-form">
+          <p class="muted small offline-only">This is the solo version that runs right in your browser. Playing with friends needs the full game running on a computer (see the project's README).</p>
+          <div class="divider online-only"><span>or play with friends</span></div>
+          <button id="btn-create" class="btn big online-only" type="button">Create a room</button>
+          <button id="btn-custom" class="btn big offline-only" type="button">Custom match: pick your player</button>
+          <form id="join-form" class="join-form online-only">
             <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" aria-label="Room code">
             <button class="btn" type="submit">Join</button>
           </form>
@@ -49,7 +51,8 @@
         <div class="card pitch-teaser">
           <h3>How it works</h3>
           <ul class="bullets">
-            <li><b>Up to 6 humans.</b> 3 per team. Any empty seat is played by the AI, so you can go solo, team up against the AI, or go head-to-head.</li>
+            <li class="offline-only"><b>You vs the AI.</b> You control one player. The AI plays your two teammates and the whole rival team.</li>
+            <li class="online-only"><b>Up to 6 humans.</b> 3 per team. Any empty seat is played by the AI, so you can go solo, team up against the AI, or go head-to-head.</li>
             <li><b>Everyone moves at once.</b> Each turn every player secretly picks a move, then it all happens together.</li>
             <li><b>The odds are real.</b> Distance, stats, stamina and what your opponents chose decide every roll.</li>
             <li><b>No fouls.</b> Slide tackle the carrier to steal it, or flatten anyone to cancel their move.</li>
@@ -62,7 +65,7 @@
     <!-- Lobby -->
     <section id="screen-lobby" class="screen hidden">
       <div class="lobby-head card">
-        <div class="room-id">
+        <div class="room-id online-only">
           <span class="muted">Room</span>
           <strong id="lobby-code" class="code">----</strong>
           <button id="btn-copy" class="btn small" type="button">Copy invite link</button>
@@ -142,7 +145,7 @@
   </main>
 
   <!-- Chat panel; moved between the lobby and match screens -->
-  <div id="chat" class="card chat">
+  <div id="chat" class="card chat online-only">
     <h3>Chat</h3>
     <ol id="chat-log" class="chat-log"></ol>
     <form id="chat-form" class="chat-form">

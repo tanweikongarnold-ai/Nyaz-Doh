@@ -25,6 +25,13 @@ export const CATALOG = {
   difficulties: DIFFICULTIES,
 };
 
+// Housekeeping timers shouldn't keep a Node process alive. (In the browser build
+// setTimeout returns a number, which has no unref.)
+const background = (t) => {
+  t?.unref?.();
+  return t;
+};
+
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) || `Player${crypto.randomInt(10, 100)}`;
 
 class Room {
@@ -78,7 +85,7 @@ class Room {
     if (!c) return;
     c.connected = false;
     clearTimeout(c.removeTimer);
-    c.removeTimer = setTimeout(() => this.leave(clientId), RECONNECT_GRACE_MS).unref();
+    c.removeTimer = background(setTimeout(() => this.leave(clientId), RECONNECT_GRACE_MS));
     if (this.hostId === clientId) this.pickNewHost();
     this.afterMembershipChange();
   }
@@ -109,7 +116,7 @@ class Room {
     const anyoneHere = [...this.clients.values()].some((c) => c.connected);
     if (!anyoneHere) {
       this.clearTimers();
-      if (!this.emptyTimer) this.emptyTimer = setTimeout(() => this.manager.destroy(this.code), EMPTY_ROOM_TTL_MS).unref();
+      if (!this.emptyTimer) this.emptyTimer = background(setTimeout(() => this.manager.destroy(this.code), EMPTY_ROOM_TTL_MS));
       if (!this.clients.size) this.manager.destroy(this.code);
       return;
     }
@@ -410,9 +417,9 @@ export class RoomManager {
     const room = s.roomCode && this.rooms.get(s.roomCode);
     if (room) room.disconnect(s.id);
     // Forget sessions that aren't in a room after a while.
-    setTimeout(() => {
+    background(setTimeout(() => {
       if (!s.socket && !s.roomCode) this.sessions.delete(s.id);
-    }, RECONNECT_GRACE_MS).unref();
+    }, RECONNECT_GRACE_MS));
   }
 
   send(clientId, msg) {

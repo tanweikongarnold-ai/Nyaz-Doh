@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -114,7 +115,14 @@ export function startServer({ port = 3000, host } = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT) || 3000;
   startServer({ port, host: process.env.HOST }).then(({ port: actual }) => {
-    console.log(`Illegal Soccer 3v3 running at http://localhost:${actual}`);
-    console.log('Share your LAN address (or deploy it) so friends can join your room.');
+    const lan = Object.values(os.networkInterfaces()).flat()
+      .filter((i) => i && i.family === 'IPv4' && !i.internal)
+      .map((i) => `http://${i.address}:${actual}`);
+    console.log('');
+    console.log('  Illegal Soccer 3v3 is running!');
+    console.log(`  Play on this computer:   http://localhost:${actual}`);
+    if (lan.length) console.log(`  Friends on your Wi-Fi:   ${lan.join('   ')}`);
+    console.log('  Keep this window open while you play. Close it (or press Ctrl+C) to stop the game.');
+    console.log('');
   });
 }

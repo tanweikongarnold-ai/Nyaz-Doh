@@ -16,6 +16,9 @@ const TEAM = { home: 0x3b82f6, away: 0xef4444 };
 const TEAM_DARK = { home: 0x1e3a8a, away: 0x7f1d1d };
 const KEEPER = { home: { shirt: 0x84cc16, shorts: 0x1a2e05 }, away: { shirt: 0xf59e0b, shorts: 0x451a03 } };
 
+// Text painted on the wall and boards. The standalone web build sets its own name.
+const BRAND = (globalThis.GAME_BRAND || 'ILLEGAL SOCCER').toUpperCase();
+
 const wx = (x) => (x - 6) * CELL;
 const wz = (y) => (y - 1) * LANE;
 const toV = (p, h = 0) => new THREE.Vector3(wx(p.x), h, wz(p.y));
@@ -185,7 +188,7 @@ function wallTexture() {
       g.fillText(text, 0, 0);
       g.restore();
     };
-    spray('ILLEGAL SOCCER', w * 0.5, 104, '#facc15', '#111', -0.02);
+    spray(BRAND, w * 0.5, 104, '#facc15', '#111', -0.02);
     spray('NO REFS', w * 0.16, 70, '#f472b6', '#111', 0.05);
     spray('NO RULES', w * 0.84, 70, '#38bdf8', '#111', -0.04);
     spray('3v3', w * 0.03, 60, '#4ade80', '#111', 0.1);
@@ -195,7 +198,7 @@ function wallTexture() {
 
 function boardTexture() {
   return canvasTex(2048, 64, (g, w, h) => {
-    const ads = [['ILLEGAL SOCCER', '#facc15', '#111'], ['STREET KINGS', '#fff', '#1d4ed8'], ['NO REFS', '#111', '#f472b6'],
+    const ads = [[BRAND, '#facc15', '#111'], ['STREET KINGS', '#fff', '#1d4ed8'], ['NO REFS', '#111', '#f472b6'],
       ['IRON VIPERS', '#fff', '#b91c1c'], ['SLIDE TACKLES WELCOME', '#111', '#4ade80'], ['3v3', '#fff', '#7c3aed']];
     const seg = w / ads.length;
     ads.forEach(([text, fg, bg], i) => {

@@ -4,28 +4,41 @@
 import { createPitch2D } from './pitch2d.js';
 
 const $ = (sel) => document.querySelector(sel);
-const store = {
-  get: (k, d) => {
+// Browser storage can be missing or throw (private windows, sandboxed pages), so every
+// access goes through these; the game works without it, it just won't remember things.
+const makeStore = (area) => ({
+  get: (k, d = null) => {
     try {
-      return localStorage.getItem(k) ?? d;
+      return window[area].getItem(k) ?? d;
     } catch {
       return d;
     }
   },
   set: (k, v) => {
     try {
-      localStorage.setItem(k, v);
+      window[area].setItem(k, v);
     } catch {
-      // private mode etc.: preferences just won't stick
+      // ignore
     }
   },
-};
+  remove: (k) => {
+    try {
+      window[area].removeItem(k);
+    } catch {
+      // ignore
+    }
+  },
+});
+const store = makeStore('localStorage');
+const session = makeStore('sessionStorage');
+// The single-page solo build runs the server inside the page (see web/), with no rooms to share.
+const OFFLINE = !!window.GAME_OFFLINE;
 
 const S = {
   ws: null,
-  clientId: sessionStorage.getItem('is-client-id'),
-  token: sessionStorage.getItem('is-token'),
-  name: localStorage.getItem('is-name') || '',
+  clientId: session.get('is-client-id'),
+  token: session.get('is-token'),
+  name: store.get('is-name', ''),
   catalog: null,
   room: null,
   you: null,
@@ -39,7 +52,7 @@ const S = {
   seenSeqs: new Set(),
   chat: [],
   reconnectDelay: 500,
-  pendingJoin: new URLSearchParams(location.search).get('room'),
+  pendingJoin: OFFLINE ? null : new URLSearchParams(location.search).get('room'),
   ftDismissedFor: null,
   view: store.get('is-view', '3d'), // '3d' | '2d'
   cam: store.get('is-cam', 'follow'),
@@ -132,8 +145,8 @@ function onMessage(msg) {
       S.clientId = msg.clientId;
       S.token = msg.token;
       S.catalog = msg.catalog;
-      sessionStorage.setItem('is-client-id', msg.clientId);
-      sessionStorage.setItem('is-token', msg.token);
+      session.set('is-client-id', msg.clientId);
+      session.set('is-token', msg.token);
       if (!S.name) {
         S.name = msg.name;
         $('#name-input').value = msg.name;
@@ -244,10 +257,15 @@ function flushReveal() {
 }
 
 function setUrlRoom(code) {
-  const url = new URL(location.href);
-  if (code) url.searchParams.set('room', code);
-  else url.searchParams.delete('room');
-  if (url.href !== location.href) history.replaceState(null, '', url);
+  if (OFFLINE) return;
+  try {
+    const url = new URL(location.href);
+    if (code) url.searchParams.set('room', code);
+    else url.searchParams.delete('room');
+    if (url.href !== location.href) history.replaceState(null, '', url);
+  } catch {
+    // Some embedded pages can't change their URL; refresh-to-rejoin just won't work there.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -712,10 +730,22 @@ function renderRosters() {
   const hc = $('#host-controls');
   hc.replaceChildren();
   if (S.you?.isHost && S.room.phase === 'match') {
-    hc.append(h('button', {
-      class: 'btn small danger', type: 'button',
-      onclick: () => { if (confirm('End this match for everyone and go back to the lobby?')) send('abort'); },
-    }, 'End match'));
+    // Two taps instead of confirm(), which embedded pages can't show.
+    const end = h('button', { class: 'btn small danger', type: 'button' }, 'End match');
+    let armed = null;
+    end.addEventListener('click', () => {
+      if (armed) {
+        clearTimeout(armed);
+        send('abort');
+        return;
+      }
+      end.textContent = 'Tap again to end';
+      armed = setTimeout(() => {
+        armed = null;
+        end.textContent = 'End match';
+      }, 3000);
+    });
+    hc.append(end);
   }
   if (S.you?.slot !== -1 && S.room.phase === 'match') {
     hc.append(h('button', { class: 'btn small ghost', type: 'button', onclick: () => send('leaveSlot') }, 'Hand my seat to the AI'));
@@ -837,7 +867,7 @@ function saveName(input = $('#name-input')) {
   const v = input.value.trim().slice(0, 16);
   if (!v || v === S.name) return;
   S.name = v;
-  localStorage.setItem('is-name', v);
+  store.set('is-name', v);
   $('#name-input').value = v;
   send('setName', { name: v });
 }
@@ -853,6 +883,10 @@ $('#btn-quick').addEventListener('click', () => {
   send('createRoom', { quick: true });
 });
 $('#btn-create').addEventListener('click', () => {
+  saveName();
+  send('createRoom');
+});
+$('#btn-custom').addEventListener('click', () => {
   saveName();
   send('createRoom');
 });
@@ -905,8 +939,13 @@ document.addEventListener('keydown', (e) => {
 // A duplicated browser tab inherits sessionStorage, so it would hijack the original
 // tab's seat. Ask other tabs whether our identity is already live; if so, start fresh.
 async function ensureUniqueIdentity() {
-  if (!('BroadcastChannel' in window)) return;
-  const bc = new BroadcastChannel('illegal-soccer-tabs');
+  if (OFFLINE || !('BroadcastChannel' in window)) return;
+  let bc;
+  try {
+    bc = new BroadcastChannel('illegal-soccer-tabs');
+  } catch {
+    return;
+  }
   if (S.clientId) {
     const taken = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve(false), 150);
@@ -921,8 +960,8 @@ async function ensureUniqueIdentity() {
     if (taken) {
       S.clientId = null;
       S.token = null;
-      sessionStorage.removeItem('is-client-id');
-      sessionStorage.removeItem('is-token');
+      session.remove('is-client-id');
+      session.remove('is-token');
     }
   }
   bc.onmessage = (e) => {

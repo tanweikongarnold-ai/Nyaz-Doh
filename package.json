@@ -8,7 +8,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "test": "node --test test/*.test.js",
-    "sim": "node scripts/simulate.js"
+    "sim": "node scripts/simulate.js",
+    "build:web": "node scripts/build-web.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -17,5 +18,8 @@
     "three": "^0.170.0",
     "ws": "^8.18.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.25.11"
+  }
 }

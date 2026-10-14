@@ -33,6 +33,10 @@ body {
 }
 button, input, select { font: inherit; color: inherit; }
 .hidden { display: none !important; }
+.offline-only { display: none; }
+.offline .offline-only { display: block; }
+.offline li.offline-only { display: list-item; }
+.offline .online-only { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 h1, h2, h3 { margin: 0 0 0.5rem; line-height: 1.15; }
@@ -42,7 +46,7 @@ h3 { font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(10, 14, 26, 0.8);
-  position: sticky; top: 0; z-index: 20; backdrop-filter: blur(6px);
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; backdrop-filter: blur(6px);
 }
 .brand { font-family: var(--display); font-size: 1.35rem; letter-spacing: 0.04em; color: var(--text); text-decoration: none; }
 .brand span { color: var(--accent); margin-left: 4px; }

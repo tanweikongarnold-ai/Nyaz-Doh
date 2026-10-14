@@ -11,7 +11,23 @@ A turn-based, multiplayer 3v3 street soccer game inspired by the Roblox game *Il
 
 The match is played on a **3D street pitch**: a floodlit cage with blocky players, goalkeepers and a graffiti wall. After everyone picks their moves, the turn replays in 3D: slide tackles, passes along their real paths, shots, keeper dives, stomps, teleports and goal celebrations. The play-by-play and the score update when the replay finishes, so nothing is spoiled. You can pick one of five cameras (Follow ball, Behind me, Wide, Top, or Free to orbit and zoom), and switch to a flat 2D pitch at any time. Browsers without WebGL 2 get the 2D pitch automatically.
 
-## Run it
+## Play it (no coding needed)
+
+**Solo, in your browser:** the solo version (you vs the AI) runs as a single web page with nothing to install. To make that page yourself, run `npm run build:web`, which creates `dist/street-rules-solo.html`. Open it in any browser.
+
+**With friends, on your computer:**
+
+1. Install **Node.js** (free) from <https://nodejs.org>. Pick the **LTS** version and click through the installer.
+2. On this project's GitHub page, click the green **Code** button, then **Download ZIP**. Unzip it.
+3. Open the unzipped folder and double-click:
+   - **Windows:** `Start Game (Windows).bat`. If Windows warns you, click **More info**, then **Run anyway**.
+   - **Mac:** `Start Game (Mac).command`. The first time, right-click it, choose **Open**, then **Open** again.
+4. A black window appears and the game opens in your browser. The first start takes about a minute.
+5. Friends on the same Wi-Fi open the **"Friends on your Wi-Fi"** address shown in the black window. Click **Create a room** and send them the invite link.
+
+Keep the black window open while you play. Closing it stops the game.
+
+## Run it (for developers)
 
 You need [Node.js](https://nodejs.org) 18 or newer.
 
